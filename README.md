@@ -27,6 +27,19 @@ may be run together (`CAT`) or separated by spaces or commas (`C A T`). Rows
 shorter than the longest row are padded with blank cells. The custom grid is
 kept in local storage until you click **Default**.
 
+## Saved groups
+
+A saved group has a name, plus an optional word (highlighted along its paths)
+and optional extra cells (Ctrl-click tiles to select them). **Save** stores
+whatever is in the search bar and selection; it is named after the word, or
+you are asked for a name if there's only a selection.
+
+- Click a group to copy its word and colour into the search bar as a separate
+  query. The group itself doesn't change.
+- Click the pencil to edit a group. The search bar turns yellow and holds the
+  group's word, its cells are selected, and its name becomes editable. Change
+  any of them and press **Save**, or press Esc or the pencil again to cancel.
+
 ## Saved data
 
 Saved words and groups, settings and any custom grid are stored in the

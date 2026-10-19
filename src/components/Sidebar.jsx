@@ -1,4 +1,5 @@
 import GridImport from './GridImport';
+import { newId, normalizeGroups } from '../utils/groups';
 
 export default function Sidebar({
   settings,
@@ -7,22 +8,31 @@ export default function Sidebar({
   loadingMsg,
   savedQueries,
   setSavedQueries,
-  setSearchQuery,
-  setColor,
-  setSelectedCells,
+  editing,
+  setEditingName,
+  editError,
+  onToggleEdit,
+  onLoadGroup,
+  onSave,
+  onCancelEdit,
   gridData,
   isCustomGrid,
   onGridImport,
   onGridReset
 }) {
-  const toggleVisibility = (e, index) => {
+  const toggleVisibility = (e, id) => {
     e.stopPropagation();
-    setSavedQueries(savedQueries.map((q, i) => (i === index ? { ...q, visible: !q.visible } : q)));
+    setSavedQueries(savedQueries.map(g => (g.id === id ? { ...g, visible: !g.visible } : g)));
   };
 
-  const deleteQuery = (e, index) => {
+  const deleteGroup = (e, id) => {
     e.stopPropagation();
-    setSavedQueries(savedQueries.filter((_, i) => i !== index));
+    setSavedQueries(savedQueries.filter(g => g.id !== id));
+  };
+
+  const toggleEdit = (e, id) => {
+    e.stopPropagation();
+    onToggleEdit(id);
   };
 
   const handleDragStart = (e, index) => {
@@ -41,18 +51,6 @@ export default function Sidebar({
     }
   };
 
-  const loadQuery = (q) => {
-    if (q.type === 'group') {
-      setSearchQuery(q.word);
-      setColor(q.color);
-      setSelectedCells(q.cells);
-    } else {
-      setSelectedCells([]);
-      setSearchQuery(q.word);
-      setColor(q.color);
-    }
-  };
-
   const handleExport = async () => {
     const dataStr = JSON.stringify(savedQueries);
     try {
@@ -67,23 +65,24 @@ export default function Sidebar({
     const dataStr = prompt('Paste your word list JSON:');
     if (!dataStr) return;
     try {
-      const imported = JSON.parse(dataStr);
-      if (Array.isArray(imported)) {
-        const copy = [...savedQueries];
-        imported.forEach(impQ => {
-          const existingIdx = copy.findIndex(q => q.word === impQ.word);
-          if (existingIdx > -1) copy[existingIdx] = impQ;
-          else copy.push(impQ);
-        });
-        setSavedQueries(copy);
-      }
+      const parsed = JSON.parse(dataStr);
+      if (!Array.isArray(parsed)) throw new Error('not a list');
+      // Groups are matched by name; imported ones get fresh ids so they can't
+      // collide with ids already in this list.
+      const copy = [...savedQueries];
+      normalizeGroups(parsed).forEach(imp => {
+        const existingIdx = copy.findIndex(g => g.name === imp.name);
+        if (existingIdx > -1) copy[existingIdx] = { ...imp, id: copy[existingIdx].id };
+        else copy.push({ ...imp, id: newId() });
+      });
+      setSavedQueries(copy);
     } catch {
       alert('Invalid JSON data.');
     }
   };
 
   const clearAll = () => {
-    if (window.confirm('Clear all saved words and groups?')) {
+    if (window.confirm('Clear all saved groups?')) {
       setSavedQueries([]);
     }
   };
@@ -129,37 +128,69 @@ export default function Sidebar({
         </label>
       </div>
 
-      <h3 className="text-slate-300 text-lg mb-2">Saved Words</h3>
+      <h3 className="text-slate-300 text-lg mb-2">Saved Groups</h3>
       <ul className="flex-1 min-h-[6rem] overflow-y-auto m-0 p-0 list-none flex flex-col gap-2 pr-2">
-        {savedQueries.map((q, i) => (
-          <li 
-            key={i} 
-            draggable 
+        {savedQueries.map((g, i) => {
+          const isEditing = editing?.id === g.id;
+          const cellText = g.cells.length ? `${g.cells.length} cell${g.cells.length === 1 ? '' : 's'}` : '';
+          const details = [g.word, cellText].filter(Boolean).join(' + ');
+          const nameError = isEditing && /name|exists/.test(editError);
+          return (
+          <li
+            key={g.id}
+            draggable={!isEditing}
             onDragStart={(e) => handleDragStart(e, i)}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => handleDrop(e, i)}
-            className="flex items-center gap-2 p-2 bg-slate-900/40 hover:bg-slate-900/80 rounded-lg cursor-pointer border border-transparent hover:border-white/10 transition"
+            onClick={() => onLoadGroup(g)}
+            className={`flex items-center gap-2 p-2 rounded-lg border transition ${isEditing ? 'bg-yellow-400/10 border-yellow-400/60' : `bg-slate-900/40 border-transparent ${editing ? '' : 'cursor-pointer hover:bg-slate-900/80 hover:border-white/10'}`}`}
           >
-            <div className="w-4 h-4 rounded-full flex-none" style={{ background: q.color }} onClick={() => loadQuery(q)}></div>
-            <div className="flex-grow font-semibold tracking-wide truncate" onClick={() => loadQuery(q)}>
-              {q.word} {q.type === 'group' && <span className="text-xs opacity-70 ml-1">(Group)</span>}
+            <div className="w-4 h-4 rounded-full flex-none" style={{ background: g.color }}></div>
+            <div className="flex-grow min-w-0 flex flex-col">
+              {isEditing ? (
+                <input
+                  value={editing.name}
+                  onChange={e => setEditingName(e.target.value.toUpperCase())}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') onSave();
+                    else if (e.key === 'Escape') onCancelEdit();
+                  }}
+                  aria-label="Group name"
+                  className={`min-w-0 px-1 -mx-1 py-0.5 rounded border bg-slate-900/80 text-white font-semibold tracking-wide uppercase outline-none ${nameError ? 'border-red-400' : 'border-yellow-400/60 focus:border-yellow-300'}`}
+                />
+              ) : (
+                <span className="font-semibold tracking-wide truncate">{g.name}</span>
+              )}
+              {details && details !== g.name && <span className="text-xs text-slate-400 truncate">{details}</span>}
             </div>
-            
-            <div className={`cursor-pointer opacity-50 hover:opacity-100 transition ${q.visible ? 'text-sky-400 opacity-100' : ''}`} onClick={(e) => toggleVisibility(e, i)}>
+
+            <button
+              type="button"
+              title={isEditing ? 'Cancel editing' : 'Edit group'}
+              aria-pressed={isEditing}
+              onClick={(e) => toggleEdit(e, g.id)}
+              className={`flex-none p-0.5 bg-transparent border-none cursor-pointer transition ${isEditing ? 'text-yellow-400' : 'text-slate-200 opacity-50 hover:opacity-100 hover:text-yellow-300'}`}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+              </svg>
+            </button>
+            <div className={`cursor-pointer opacity-50 hover:opacity-100 transition ${g.visible ? 'text-sky-400 opacity-100' : ''}`} onClick={(e) => toggleVisibility(e, g.id)}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                {q.visible 
+                {g.visible
                   ? <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></>
                   : <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></>
                 }
               </svg>
             </div>
-            <div className="cursor-pointer opacity-50 hover:opacity-100 hover:text-red-500 transition ml-1" onClick={(e) => deleteQuery(e, i)}>
+            <div className="cursor-pointer opacity-50 hover:opacity-100 hover:text-red-500 transition ml-1" onClick={(e) => deleteGroup(e, g.id)}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
               </svg>
             </div>
           </li>
-        ))}
+          );
+        })}
       </ul>
 
       <div className="mt-4 pt-4 border-t border-white/10 flex flex-col gap-2">

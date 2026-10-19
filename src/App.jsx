@@ -3,6 +3,7 @@ import LetterGrid from './components/LetterGrid';
 import Sidebar from './components/Sidebar';
 import { findPaths, parseGrid } from './utils/solver';
 import useSolver from './utils/useSolver';
+import { newId, normalizeGroups } from './utils/groups';
 
 const CUSTOM_GRID_KEY = 'letterGridCustomGrid';
 // Pause after the last keystroke in the equivalences box before re-solving.
@@ -24,8 +25,7 @@ const storage = {
 
 function loadSavedQueries() {
   try {
-    const parsed = JSON.parse(storage.get('letterGridQueries') || '[]');
-    return Array.isArray(parsed) ? parsed : [];
+    return normalizeGroups(JSON.parse(storage.get('letterGridQueries') || '[]'));
   } catch {
     return [];
   }
@@ -75,6 +75,10 @@ function App() {
   const [selectedCells, setSelectedCells] = useState([]);
   const [inspectedTile, setInspectedTile] = useState(null);
   const [hoverWord, setHoverWord] = useState(null);
+  // The group being edited: { id, name }. While set, the search bar, colour and
+  // selected cells hold that group's contents, and Save writes them back.
+  const [editing, setEditing] = useState(null);
+  const searchInputRef = useRef(null);
 
   useEffect(() => {
     storage.set('letterGridQueries', JSON.stringify(savedQueries));
@@ -171,33 +175,80 @@ function App() {
     setSettings(s => ({ ...s, [key]: val }));
   };
 
+  // A group deleted (or cleared) mid-edit simply ends the edit.
+  const editingGroup = editing && savedQueries.find(g => g.id === editing.id);
+
+  const editError = (() => {
+    if (!editingGroup) return '';
+    const name = editing.name.trim().toUpperCase();
+    if (!name) return 'The group needs a name.';
+    // Saving outside edit mode updates the group with the same name, so names stay unique.
+    if (savedQueries.some(g => g.id !== editing.id && g.name === name)) return `"${name}" already exists.`;
+    if (!searchQuery.trim() && !selectedCells.length) return 'Enter a word or select cells.';
+    return '';
+  })();
+
+  const startEditing = (id) => {
+    const group = savedQueries.find(g => g.id === id);
+    if (!group) return;
+    setEditing({ id, name: group.name });
+    setSearchQuery(group.word);
+    setSelectedCells(group.cells);
+    setColor(group.color);
+    searchInputRef.current?.focus();
+  };
+
+  const stopEditing = () => {
+    setEditing(null);
+    setSearchQuery('');
+    setSelectedCells([]);
+  };
+
+  const toggleEditing = (id) => (editingGroup?.id === id ? stopEditing() : startEditing(id));
+
+  // Outside edit mode, clicking a group copies its word and colour into the
+  // search bar as an independent query; the group itself is untouched.
+  const loadGroup = (group) => {
+    if (editingGroup) return;
+    setSearchQuery(group.word);
+    setColor(group.color);
+  };
+
   const handleSave = () => {
-    if (selectedCells.length > 0) {
-      let groupName = searchQuery.trim().toUpperCase();
-      if (!groupName) {
-        const promptName = prompt("Enter a name for this cell group:", "My Group");
-        if (!promptName) return;
-        groupName = promptName.trim().toUpperCase();
-      }
-      const existingIdx = savedQueries.findIndex(q => q.word === groupName);
-      const newGroup = { type: 'group', word: groupName, cells: [...selectedCells], color, visible: true };
-      if (existingIdx > -1) {
-        setSavedQueries(savedQueries.map((q, i) => (i === existingIdx ? newGroup : q)));
-      } else {
-        setSavedQueries([...savedQueries, newGroup]);
-      }
+    const word = searchQuery.trim().toUpperCase();
+    const cells = [...selectedCells];
+
+    if (editingGroup) {
+      if (editError) return;
+      const name = editing.name.trim().toUpperCase();
+      setSavedQueries(savedQueries.map(g => (g.id === editing.id ? { ...g, name, word, cells, color } : g)));
+      stopEditing();
+      return;
+    }
+
+    if (!word && !cells.length) return;
+    let name = word;
+    if (!name) {
+      const promptName = prompt('Enter a name for this group:', 'My Group');
+      if (!promptName || !promptName.trim()) return;
+      name = promptName.trim().toUpperCase();
+    }
+    const existing = savedQueries.find(g => g.name === name);
+    if (existing) {
+      setSavedQueries(savedQueries.map(g => (g.id === existing.id ? { ...g, word, cells, color } : g)));
+    } else {
+      setSavedQueries([...savedQueries, { id: newId(), name, word, cells, color, visible: true }]);
+    }
+    if (cells.length) {
       setSelectedCells([]);
       setSearchQuery('');
-    } else {
-      const word = searchQuery.trim().toUpperCase();
-      if (!word) return;
-      const existingIdx = savedQueries.findIndex(q => q.word === word);
-      if (existingIdx > -1) {
-        setSavedQueries(savedQueries.map((q, i) => (i === existingIdx ? { ...q, color } : q)));
-      } else {
-        setSavedQueries([...savedQueries, { word, color, visible: true }]);
-      }
     }
+  };
+
+  const handleSearchKeyDown = (e) => {
+    if (!editingGroup) return;
+    if (e.key === 'Enter') handleSave();
+    else if (e.key === 'Escape') stopEditing();
   };
 
   return (
@@ -208,13 +259,16 @@ function App() {
 
       <div className="flex flex-col lg:flex-row gap-12 w-11/12 mx-auto mb-12 items-start justify-center">
         <div className="flex flex-col gap-6 flex-none max-w-full">
-          <div className="flex gap-4 items-center bg-slate-800/70 p-4 rounded-2xl backdrop-blur-md border border-white/10 shadow-2xl">
+          <div className={`flex flex-col gap-3 bg-slate-800/70 p-4 rounded-2xl backdrop-blur-md border shadow-2xl transition ${editingGroup ? 'border-yellow-400/60' : 'border-white/10'}`}>
+          <div className="flex gap-4 items-center">
             <input
+              ref={searchInputRef}
               type="text"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value.toUpperCase())}
-              placeholder="Type a word..."
-              className="flex-grow min-w-0 p-3 rounded-lg border border-white/20 bg-slate-900/60 text-white text-xl font-semibold outline-none transition focus:border-sky-400 uppercase"
+              onKeyDown={handleSearchKeyDown}
+              placeholder={editingGroup ? 'Word for this group (optional)' : 'Type a word...'}
+              className={`flex-grow min-w-0 p-3 rounded-lg border bg-slate-900/60 text-white text-xl font-semibold outline-none transition uppercase ${editingGroup ? 'border-yellow-400 ring-2 ring-yellow-400/40 focus:border-yellow-300' : 'border-white/20 focus:border-sky-400'}`}
             />
             <input
               type="color"
@@ -222,9 +276,20 @@ function App() {
               onChange={e => setColor(e.target.value)}
               className="w-10 h-10 flex-none border-none rounded-full cursor-pointer bg-transparent"
             />
-            <button onClick={handleSave} className="py-3 px-6 bg-blue-500 hover:bg-blue-600 active:scale-95 text-white border-none rounded-lg font-semibold text-base cursor-pointer transition">
+            <button
+              onClick={handleSave}
+              disabled={!!editError}
+              className={`py-3 px-6 active:scale-95 border-none rounded-lg font-semibold text-base cursor-pointer transition disabled:opacity-50 disabled:cursor-not-allowed ${editingGroup ? 'bg-yellow-400 hover:bg-yellow-300 text-slate-900' : 'bg-blue-500 hover:bg-blue-600 text-white'}`}
+            >
               Save
             </button>
+          </div>
+          {editingGroup && (
+            <p className="m-0 text-sm text-yellow-200/90">
+              Editing <span className="font-semibold">{editingGroup.name}</span>. Change the word, colour or Ctrl-selected cells, then Save. Esc or the edit button cancels.
+              {editError && <span className="block text-red-400 mt-1">{editError}</span>}
+            </p>
+          )}
           </div>
 
           <LetterGrid
@@ -232,6 +297,7 @@ function App() {
             searchPaths={currentPaths}
             searchColor={color}
             savedQueries={savedQueries}
+            hiddenGroupId={editingGroup?.id}
             settings={settings}
             selectedCells={selectedCells}
             setSelectedCells={setSelectedCells}
@@ -251,9 +317,13 @@ function App() {
           loadingMsg={loadingMsg}
           savedQueries={savedQueries}
           setSavedQueries={setSavedQueries}
-          setSearchQuery={setSearchQuery}
-          setColor={setColor}
-          setSelectedCells={setSelectedCells}
+          editing={editingGroup ? editing : null}
+          setEditingName={name => setEditing(ed => ({ ...ed, name }))}
+          editError={editError}
+          onToggleEdit={toggleEditing}
+          onLoadGroup={loadGroup}
+          onSave={handleSave}
+          onCancelEdit={stopEditing}
           gridData={gridData}
           isCustomGrid={isCustomGrid}
           onGridImport={handleGridImport}

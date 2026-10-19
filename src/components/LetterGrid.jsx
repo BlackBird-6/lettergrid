@@ -36,6 +36,7 @@ export default function LetterGrid({
   searchPaths,
   searchColor,
   savedQueries,
+  hiddenGroupId,
   settings,
   selectedCells,
   setSelectedCells,
@@ -54,19 +55,19 @@ export default function LetterGrid({
   // not on every hover.
   const savedLayers = useMemo(() => {
     const layers = [];
-    savedQueries.forEach(q => {
-      if (!q.visible) return;
-      if (q.type === 'group') {
-        // Groups saved against a different grid may point outside this one.
-        const cells = q.cells.filter(([r, c]) => r >= 0 && r < rows && c >= 0 && c < cols);
-        if (cells.length) layers.push({ paths: [cells], color: q.color, noLines: true });
-      } else {
-        const qPaths = findPaths(q.word);
-        if (qPaths.length > 0) layers.push({ paths: qPaths, color: q.color });
+    savedQueries.forEach(g => {
+      // The group being edited is shown live through the search layers instead.
+      if (!g.visible || g.id === hiddenGroupId) return;
+      if (g.word) {
+        const paths = findPaths(g.word);
+        if (paths.length > 0) layers.push({ paths, color: g.color });
       }
+      // Cells saved against a different grid may point outside this one.
+      const cells = g.cells.filter(([r, c]) => r >= 0 && r < rows && c >= 0 && c < cols);
+      if (cells.length) layers.push({ paths: [cells], color: g.color, noLines: true });
     });
     return layers;
-  }, [savedQueries, findPaths, rows, cols]);
+  }, [savedQueries, hiddenGroupId, findPaths, rows, cols]);
 
   const layers = [];
   if (searchPaths.length > 0) layers.push({ paths: searchPaths, color: searchColor });
